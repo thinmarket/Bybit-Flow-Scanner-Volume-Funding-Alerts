@@ -2,7 +2,7 @@ import sys
 import asyncio
 import aiohttp
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout, QTabWidget, QHeaderView, QPushButton, QCheckBox
+    QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout, QTabWidget, QHeaderView, QPushButton, QCheckBox, QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import QTimer, Qt, QUrl
 from datetime import datetime
@@ -102,6 +102,43 @@ class FundingAlertDialog(QDialog):
             geo = parent.geometry()
             self.move(geo.x() + 20, geo.y() + geo.height() - self.height() - 20)
 
+class FundingAlertsListDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: #232629; color: #fff; border-radius: 8px; padding: 16px;")
+        self.setFixedSize(340, 220)
+        self.layout = QVBoxLayout(self)
+        self.label = QLabel("<b>До фандинга осталось менее 5 минут:</b>")
+        self.label.setStyleSheet("font-size: 16px;")
+        self.layout.addWidget(self.label)
+        self.list_widget = QListWidget()
+        self.list_widget.setStyleSheet("background: #232629; color: #fff; border: none; font-size: 15px;")
+        self.layout.addWidget(self.list_widget)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.accept)
+        self.hide_on_empty = True
+
+    def update_alerts(self, alerts):
+        self.list_widget.clear()
+        for ticker, time_left in alerts:
+            item = QListWidgetItem(f"{ticker}: {time_left}")
+            self.list_widget.addItem(item)
+        if alerts:
+            self.show()
+            self.timer.start(5000)  # 5 секунд
+        elif self.hide_on_empty:
+            self.hide()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        parent = self.parentWidget() or self.window()
+        if parent:
+            geo = parent.geometry()
+            self.move(geo.x() + 20, geo.y() + geo.height() - self.height() - 20)
+
 class ScreenerTab(QWidget):
     def __init__(self, columns, column_keys, numeric_cols, parent=None, funding_alerts_enabled_ref=None):
         super().__init__(parent)
@@ -136,6 +173,8 @@ class ScreenerTab(QWidget):
         self.table.horizontalHeader().setFocusPolicy(Qt.NoFocus)  # Отключаем фокус у заголовка
         self.table.cellClicked.connect(self.handle_cell_click)
         self._alerted_symbols = set()
+        self._funding_alerts_dialog = FundingAlertsListDialog(self)
+        self._current_alerts = []
 
     def on_alert_checkbox_changed(self, state):
         if self.funding_alerts_enabled_ref is not None:
@@ -245,9 +284,10 @@ class ScreenerTab(QWidget):
     def check_funding_alerts(self):
         if not self.funding_alerts_enabled_ref or not self.funding_alerts_enabled_ref[0]:
             self._alerted_symbols.clear()
+            self._funding_alerts_dialog.hide()
             return
+        alerts = []
         for symbol, d in self.data_cache.items():
-            # Только для фьючерсов
             if d.get('type', 'futures') != 'futures':
                 continue
             funding_info = d.get('funding_info', '')
@@ -259,12 +299,10 @@ class ScreenerTab(QWidget):
                 total_sec = h * 3600 + m * 60 + s
             except Exception:
                 continue
-            if 0 < total_sec <= 300 and symbol not in self._alerted_symbols:
-                dlg = FundingAlertDialog(d.get('symbol', symbol), time_str, self)
-                dlg.show()
-                self._alerted_symbols.add(symbol)
-            elif total_sec > 300 and symbol in self._alerted_symbols:
-                self._alerted_symbols.remove(symbol)
+            if 0 < total_sec <= 300:
+                alerts.append((d.get('symbol', symbol), time_str))
+        # Показываем все тикеры в одном окне
+        self._funding_alerts_dialog.update_alerts(alerts)
 
 class ChartDialog(QDialog):
     def __init__(self, tv_symbol, parent=None):
